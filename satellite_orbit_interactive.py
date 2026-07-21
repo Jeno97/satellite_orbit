@@ -115,7 +115,7 @@ lon = np.arctan2(Y_new, X_new) * (180/np.pi)
 # plotting
 # add plot of Earth
 try:
-    img = plt.imread('Earthmap1000x500.jpg')
+    img = plt.imread('images/Earthmap1000x500.jpg')
     ax2.imshow(img, extent=[-180, 180, -90, 90], aspect='auto', alpha=0.8)
 except FileNotFoundError:
     ax2.grid(True, linestyle=':', alpha=0.8) 

@@ -3,9 +3,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.ticker as mticker
 from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
-from matplotlib.widgets import CheckButtons
+from matplotlib.widgets import Slider, CheckButtons
 from PIL import Image
 
 # constants
@@ -51,7 +51,7 @@ def get_total_acceleration(r, v, enable_drag=False, B=1e-6, enable_J2=False):
     else:
         a_J2 = np.array([0, 0, 0])  
 
-    return a_grav + a_drag + a_J2 
+    return a_grav + a_drag + a_J2
 
 def run_simulation(velocity_multiplier, enable_drag=False, B=1e-6, enable_J2=False, inc=0):
 
@@ -123,11 +123,13 @@ def run_simulation(velocity_multiplier, enable_drag=False, B=1e-6, enable_J2=Fal
     return X, Y, Z, v_mag
 
 # plotting
-fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={'projection': '3d'})
+fig = plt.figure(figsize=(16, 8))
+ax1 = fig.add_subplot(121, projection='3d')
+ax2 = fig.add_subplot(122)
 plt.subplots_adjust(bottom=0.2)
 
 # add text with current velocity and positions
-telemetry_text = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+telemetry_text = ax1.text2D(0.05, 0.95, "", transform=ax1.transAxes, fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
 # add sliders for relevant parameters
 # velocity factor
@@ -149,14 +151,29 @@ J2_button = CheckButtons(ax_J2, labels=['Enable J2'], actives=[False])
 # run default circular orbit
 X, Y, Z, v_mag = run_simulation(1.0, enable_drag=(B_slider.val > 1e-9), B=B_slider.val, enable_J2=J2_button.get_status()[0], inc=inc_slider.val)
 
+# how much has Earth rotated?
+w_E = 7.2921e-5 # rad/s
+dt = 10
+t = np.arange(len(X))*dt
+E_rot = w_E*t # array of angle Earth has rotated at each satellite instance
+
+# calculate initial ground track plot
+r_s = np.linalg.norm(np.array([X, Y, Z]), axis=0)
+lat = np.arcsin(Z/r_s) * (180/np.pi)
+lon = ((np.arctan2(Y, X) - E_rot) * (180/np.pi) + 180) % 360 - 180 # modulo to ensure stays in -180 to 180
+
 # moving satellite object
-satellite, = ax.plot([], [], [], 'r.', label='Satellite')
-orbit_line, = ax.plot(X, Y, Z, 'r', linestyle='--', label='Orbit Line')
+satellite, = ax1.plot([], [], [], 'r.', label='Satellite')
+orbit_line, = ax1.plot(X, Y, Z, 'r', linestyle='--', label='Orbit Line')
 
 # vectors
-vel_line, = ax.plot([], [], [], color='lime', lw=3)
-grav_line, = ax.plot([], [], [], color='cyan', lw=3)
-acc_line, = ax.plot([], [], [], color='magenta', lw=2)
+vel_line, = ax1.plot([], [], [], color='lime', lw=3, label='Velocity Vector')
+grav_line, = ax1.plot([], [], [], color='cyan', lw=3)
+acc_line, = ax1.plot([], [], [], color='magenta', lw=2, label='Total Acceleration Vector')
+
+# satellite ground track
+satellite_gt, = ax2.plot([], [], 'ro') # ground track position
+gt_line, = ax2.plot(lon, lat, 'r.', markersize=0.4)
 
 # slider changes
 def update_slider(val):
@@ -167,18 +184,30 @@ def update_slider(val):
 
     enable_J2_bool = J2_button.get_status()[0]
 
-    global X, Y, Z, v_mag
+    global X, Y, Z, v_mag, r_s, lat, lon, gt_line
 
     use_drag = True if new_B > 1e-9 else False
 
     X, Y, Z, v_mag = run_simulation(new_v, enable_drag=use_drag, B=new_B, enable_J2=enable_J2_bool, inc=new_inc)
-    
+
     orbit_line.set_data(np.array(X), np.array(Y))
     orbit_line.set_3d_properties(np.array(Z))
+    
+    # how much has Earth rotated?
+    w_E = 7.2921e-5 # rad/s
+    dt = 10
+    t = np.arange(len(X))*dt
+    E_rot = w_E*t # array of angle Earth has rotated at each satellite instance
+
+    # get Latitude and Longitude plot
+    r_s = np.linalg.norm(np.array([X, Y, Z]), axis=0)
+    lat = np.arcsin(Z/r_s) * (180/np.pi)
+    lon = ((np.arctan2(Y, X) - E_rot) * (180/np.pi) + 180) % 360 - 180
+
+    gt_line.set_data(lon, lat)
 
     # update frames to use new number of positions
     ani._frames = len(X)
-
     ani.frame_seq = ani.new_frame_seq()
 
 def set_vector(line, pos, vec):
@@ -236,7 +265,11 @@ def update(j):
     orbit_line.set_data(np.array(X[:j+1]), np.array(Y[:j+1]))
     orbit_line.set_3d_properties(np.array(Z[:j+1]))
 
-    return telemetry_text, satellite, orbit_line, vel_line, grav_line, acc_line
+    # update satellite ground track position
+
+    satellite_gt.set_data([lon[j]], [lat[j]])
+
+    return telemetry_text, satellite, orbit_line, vel_line, grav_line, acc_line, satellite_gt, gt_line
 
 # creating Earth meshgrid (of lat and long)
 u, v = np.meshgrid(np.radians(np.linspace(0, 360, 30)), np.radians(np.linspace(0, 180, 30)))
@@ -248,19 +281,36 @@ Z_Egrid = R_E * np.cos(v)
 img = Image.open('images/earth_surface.jpeg')
 img = img.resize((60, 60))
 img_data = np.array(img) / 255.0 # normalize pixel colors to 0-1
-ax.plot_surface(X_Egrid, Y_Egrid, Z_Egrid, facecolors=img_data, rstride=1, cstride=1, antialiased=True)
+ax1.plot_surface(X_Egrid, Y_Egrid, Z_Egrid, facecolors=img_data, rstride=1, cstride=1, antialiased=True)
 
 # set limits
 box_limit = 2 * R_E
-ax.set_xlim(-box_limit, box_limit)
-ax.set_ylim(-box_limit, box_limit)
-ax.set_zlim(-box_limit, box_limit)
-ax.set_box_aspect([1, 1, 1])
+ax1.set_xlim(-box_limit, box_limit)
+ax1.set_ylim(-box_limit, box_limit)
+ax1.set_zlim(-box_limit, box_limit)
+ax1.set_box_aspect([1, 1, 1])
 
-ax.set_xlabel('X Axis (m)')
-ax.set_ylabel('Y Axis (m)')
-ax.set_zlabel('Z Axis (m)')
-ax.legend(loc="upper right")
+ax1.set_xlabel('X Axis (m)')
+ax1.set_ylabel('Y Axis (m)')
+ax1.set_zlabel('Z Axis (m)')
+ax1.legend(loc="upper right")
+
+# plot 2D ground track
+try:
+    img = plt.imread('images/Earthmap1000x500.jpg')
+    ax2.imshow(img, extent=[-180, 180, -90, 90], aspect='auto', alpha=0.8)
+except FileNotFoundError:
+    ax2.grid(True, linestyle=':', alpha=0.8) 
+
+# set limits and plot 2D groundtrack
+ax2.set_xlim([-180, 180])
+ax2.set_ylim([-90, 90])
+ax2.set_xlabel('Longitude ($^\circ$)')
+ax2.set_ylabel('Latitude ($^\circ$)')
+
+# Format ticks with degree symbols
+ax2.xaxis.set_major_formatter(mticker.StrMethodFormatter('{x:.0f}°'))
+ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:.0f}°'))
 
 # animation
 ani = FuncAnimation(fig, update, frames=len(X), interval=10, blit=True)
